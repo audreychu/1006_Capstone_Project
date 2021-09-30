@@ -1,4 +1,4 @@
-# Using Active Learning to Label Protest Images using Convolutional Neural Networks
+# Using Active Learning to Label Protest Images with Convolutional Neural Networks
 
 ## Managing packages
 
