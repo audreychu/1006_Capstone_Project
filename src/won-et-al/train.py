@@ -254,6 +254,7 @@ def main():
     loss_history_train = []
     loss_history_val = []
     data_dir = args.data_dir
+    num_label_samples = args.num_label_samples
     img_dir_train = os.path.join(data_dir, "img/train")
     img_dir_val = os.path.join(data_dir, "img/test")
     txt_file_train = os.path.join(data_dir, "annot_train.txt")
@@ -308,9 +309,53 @@ def main():
     eigvec = torch.Tensor([[-0.5675,  0.7192,  0.4009],
                            [-0.5808, -0.0045, -0.8140],
                            [-0.5836, -0.6948,  0.4203]])
+    txt_file_train = pd.read_csv(txt_file_train, delimiter="\t").replace('-', 0)
+    
+    txt_file_train_l = txt_file_train.sample(num_label_samples, random_state=107)
+    txt_file_train_nl = txt_file_train.drop(txt_file_train_l.index)
 
-    train_dataset = ProtestDataset(
-                        txt_file = txt_file_train,
+    #`print(len(txt_file_train_l),len(txt_file_train_nl),len(txt_file_train))`
+    # train_dataset = ProtestDataset(
+    #                     txt_file = txt_file_train,
+    #                     img_dir = img_dir_train,
+    #                     transform = transforms.Compose([
+    #                             transforms.RandomResizedCrop(224),
+    #                             transforms.RandomRotation(30),
+    #                             transforms.RandomHorizontalFlip(),
+    #                             transforms.ColorJitter(
+    #                                 brightness = 0.4,
+    #                                 contrast = 0.4,
+    #                                 saturation = 0.4,
+    #                                 ),
+    #                             transforms.ToTensor(),
+    #                             Lighting(0.1, eigval, eigvec),
+    #                             normalize,
+    #                     ]))
+    txt_file_val = pd.read_csv(txt_file_val, delimiter="\t").replace('-', 0)
+    val_dataset = ProtestDataset(
+                    df_imgs = txt_file_val,
+                    img_dir = img_dir_val,
+                    transform = transforms.Compose([
+                        transforms.Resize(256),
+                        transforms.CenterCrop(224),
+                        transforms.ToTensor(),
+                        normalize,
+                    ]))
+    # train_loader = DataLoader(
+    #                 train_dataset,
+    #                 num_workers = args.workers,
+    #                 batch_size = args.batch_size,
+    #                 shuffle = True
+    #                 )
+    val_loader = DataLoader(
+                    val_dataset,
+                    num_workers = args.workers,
+                    batch_size = args.batch_size)
+
+    for epoch in range(args.start_epoch, args.epochs):
+
+        train_dataset = ProtestDataset(
+                        df_imgs= txt_file_train_l,
                         img_dir = img_dir_train,
                         transform = transforms.Compose([
                                 transforms.RandomResizedCrop(224),
@@ -325,27 +370,16 @@ def main():
                                 Lighting(0.1, eigval, eigvec),
                                 normalize,
                         ]))
-    val_dataset = ProtestDataset(
-                    txt_file = txt_file_val,
-                    img_dir = img_dir_val,
-                    transform = transforms.Compose([
-                        transforms.Resize(256),
-                        transforms.CenterCrop(224),
-                        transforms.ToTensor(),
-                        normalize,
-                    ]))
-    train_loader = DataLoader(
+
+        train_loader = DataLoader(
                     train_dataset,
                     num_workers = args.workers,
                     batch_size = args.batch_size,
                     shuffle = True
                     )
-    val_loader = DataLoader(
-                    val_dataset,
-                    num_workers = args.workers,
-                    batch_size = args.batch_size)
 
-    for epoch in range(args.start_epoch, args.epochs):
+        print(len(txt_file_train_l),len(txt_file_train_nl),len(txt_file_train))
+
         adjust_learning_rate(optimizer, epoch)
         loss_history_train_this = train(train_loader, model, criterions,
                                         optimizer, epoch)
@@ -371,6 +405,9 @@ def main():
             'loss_history_val': loss_history_val
         }, is_best)
 
+        al_image = txt_file_train_nl.sample(1)
+        txt_file_train_l = txt_file_train_l.append(al_image)
+        txt_file_train_nl = txt_file_train_nl.drop(al_image.index)
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir",
@@ -416,6 +453,11 @@ if __name__ == "__main__":
                         type = int,
                         default = 10,
                         help = "print frequency",
+                        )
+    parser.add_argument("--num_label_samples",
+                        type = int,
+                        default = 100,
+                        help = "number of initial labeled samples",
                         )
     parser.add_argument('--resume',
                         default='', type=str, metavar='PATH',

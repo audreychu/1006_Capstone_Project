@@ -17,14 +17,14 @@ class ProtestDataset(Dataset):
     """
     dataset for training and evaluation
     """
-    def __init__(self, txt_file, img_dir, transform = None):
+    def __init__(self, df_imgs, img_dir, transform = None):
         """
         Args:
-            txt_file: Path to txt file with annotation
+            df_imgs: Data Frame containing image name and label
             img_dir: Directory with images
             transform: Optional transform to be applied on a sample.
         """
-        self.label_frame = pd.read_csv(txt_file, delimiter="\t").replace('-', 0)
+        self.label_frame = df_imgs #pd.read_csv(txt_file, delimiter="\t").replace('-', 0)
         self.img_dir = img_dir
         self.transform = transform
     def __len__(self):
