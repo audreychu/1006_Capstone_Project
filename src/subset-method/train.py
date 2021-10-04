@@ -444,7 +444,8 @@ if __name__ == "__main__":
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
     parser.add_argument("--num_labels",
-                        action = "store_true",
+                        type = int,
+                        default = 100,
                         help = "number of labeled images to start with in training dataset",
                         )
     args = parser.parse_args()
