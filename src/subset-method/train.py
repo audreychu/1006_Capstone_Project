@@ -342,7 +342,7 @@ def main():
                     num_workers = args.workers,
                     batch_size = args.batch_size)
 
-    full_ix = set(range(len(train_dataset)))
+    full_indices = set(range(len(train_dataset)))
     labeled_ix = random.sample(full_indices, num_labels)
     unlabeled_ix = full_indices.difference(labeled_ix)
 
