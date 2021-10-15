@@ -5,14 +5,15 @@ Modified codes from
     https://github.com/pytorch/examples/tree/master/imagenet
 """
 
-from __future__ import print_function
+
 import os
+from pathlib import Path
 import argparse
 import numpy as np
 import pandas as pd
 import time
 import shutil
-#from itertools import ifilter
+
 from PIL import Image
 from sklearn.metrics import accuracy_score, mean_squared_error
 
@@ -30,7 +31,7 @@ from util import ProtestDataset, modified_resnet50, AverageMeter, Lighting
 # for indexing output of the model
 protest_idx = Variable(torch.LongTensor([0]))
 violence_idx = Variable(torch.LongTensor([1]))
-visattr_idx = Variable(torch.LongTensor(range(2,12)))
+visattr_idx = Variable(torch.LongTensor(list(range(2,12))))
 best_loss = float("inf")
 
 def calculate_loss(output, target, criterions, weights = [1, 10, 5]):
@@ -49,13 +50,13 @@ def calculate_loss(output, target, criterions, weights = [1, 10, 5]):
         targets[0] = target['protest'].float()
         losses = [weights[i] * criterions[i](outputs[i], targets[i]) for i in range(1)]
         scores = {}
-        scores['protest_acc'] = accuracy_score((outputs[0]).data.cpu().round(), targets[0].data.cpu())
+        scores['protest_acc'] = accuracy_score((outputs[0]).data.round(), targets[0].data)
         scores['violence_mse'] = 0
         scores['visattr_acc'] = 0
         return losses, scores, N_protest
 
     # used for filling 0 for non-protest images
-    not_protest_mask = (1 - target['protest']).bool()
+    not_protest_mask = (1 - target['protest']).byte()
 
     outputs = [None] * 4
     # protest output
@@ -76,7 +77,7 @@ def calculate_loss(output, target, criterions, weights = [1, 10, 5]):
 
     scores = {}
     # protest accuracy for this batch
-    scores['protest_acc'] = accuracy_score(outputs[0].data.cpu().round(), targets[0].data.cpu())
+    scores['protest_acc'] = accuracy_score(outputs[0].data.round(), targets[0].data)
     # violence MSE for this batch
     scores['violence_mse'] = ((outputs[1].data - targets[1].data).pow(2)).sum() / float(N_protest)
     # mean accuracy for visual attribute for this batch
@@ -115,10 +116,10 @@ def train(train_loader, model, criterions, optimizer, epoch):
 
         if args.cuda:
             input = input.cuda()
-            for k, v in target.items():
+            for k, v in list(target.items()):
                 target[k] = v.cuda()
         target_var = {}
-        for k,v in target.items():
+        for k,v in list(target.items()):
             target_var[k] = Variable(v)
 
         input_var = Variable(input)
@@ -135,12 +136,12 @@ def train(train_loader, model, criterions, optimizer, epoch):
         optimizer.step()
 
         if N_protest:
-            loss_protest.update(losses[0].data, input.size(0))
-            loss_v.update(loss.data - losses[0].data, N_protest)
+            loss_protest.update(losses[0].data[0], input.size(0))
+            loss_v.update(loss.data[0] - losses[0].data[0], N_protest)
         else:
             # when there is no protest image in the batch
-            loss_protest.update(losses[0].data, input.size(0))
-        loss_history.append(loss.data)
+            loss_protest.update(losses[0].data[0], input.size(0))
+        loss_history.append(loss.data[0])
         protest_acc.update(scores['protest_acc'], input.size(0))
         violence_mse.update(scores['violence_mse'], N_protest)
         visattr_acc.update(scores['visattr_acc'], N_protest)
@@ -185,12 +186,12 @@ def validate(val_loader, model, criterions, epoch):
 
         if args.cuda:
             input = input.cuda()
-            for k, v in target.items():
+            for k, v in list(target.items()):
                 target[k] = v.cuda()
         input_var = Variable(input)
 
         target_var = {}
-        for k,v in target.items():
+        for k,v in list(target.items()):
             target_var[k] = Variable(v)
 
         output = model(input_var)
@@ -201,12 +202,12 @@ def validate(val_loader, model, criterions, epoch):
             loss += l
 
         if N_protest:
-            loss_protest.update(losses[0].data, input.size(0))
-            loss_v.update(loss.data - losses[0].data, N_protest)
+            loss_protest.update(losses[0].data[0], input.size(0))
+            loss_v.update(loss.data[0] - losses[0].data[0], N_protest)
         else:
             # when no protest images
-            loss_protest.update(losses[0].data, input.size(0))
-        loss_history.append(loss.data)
+            loss_protest.update(losses[0].data[0], input.size(0))
+        loss_history.append(loss.data[0])
         protest_acc.update(scores['protest_acc'], input.size(0))
         violence_mse.update(scores['violence_mse'], N_protest)
         visattr_acc.update(scores['visattr_acc'], N_protest)
@@ -254,11 +255,16 @@ def main():
     loss_history_train = []
     loss_history_val = []
     data_dir = args.data_dir
-    num_label_samples = args.num_label_samples
-    img_dir_train = os.path.join(data_dir, "img/train")
-    img_dir_val = os.path.join(data_dir, "img/test")
+    img_dir_train = os.path.join(data_dir, "img", "train")
+    img_dir_val = os.path.join(data_dir, "img", "test")
     txt_file_train = os.path.join(data_dir, "annot_train.txt")
     txt_file_val = os.path.join(data_dir, "annot_test.txt")
+
+    if not os.path.exists(txt_file_train):
+        Path(txt_file_train).touch()
+    if not os.path.exists(txt_file_val):
+        Path(txt_file_val).touch()
+        
 
     # load pretrained resnet50 with a modified last fully connected layer
     model = modified_resnet50()
@@ -309,53 +315,9 @@ def main():
     eigvec = torch.Tensor([[-0.5675,  0.7192,  0.4009],
                            [-0.5808, -0.0045, -0.8140],
                            [-0.5836, -0.6948,  0.4203]])
-    txt_file_train = pd.read_csv(txt_file_train, delimiter="\t").replace('-', 0)
-    
-    txt_file_train_l = txt_file_train.sample(num_label_samples, random_state=107)
-    txt_file_train_nl = txt_file_train.drop(txt_file_train_l.index)
 
-    #`print(len(txt_file_train_l),len(txt_file_train_nl),len(txt_file_train))`
-    # train_dataset = ProtestDataset(
-    #                     txt_file = txt_file_train,
-    #                     img_dir = img_dir_train,
-    #                     transform = transforms.Compose([
-    #                             transforms.RandomResizedCrop(224),
-    #                             transforms.RandomRotation(30),
-    #                             transforms.RandomHorizontalFlip(),
-    #                             transforms.ColorJitter(
-    #                                 brightness = 0.4,
-    #                                 contrast = 0.4,
-    #                                 saturation = 0.4,
-    #                                 ),
-    #                             transforms.ToTensor(),
-    #                             Lighting(0.1, eigval, eigvec),
-    #                             normalize,
-    #                     ]))
-    txt_file_val = pd.read_csv(txt_file_val, delimiter="\t").replace('-', 0)
-    val_dataset = ProtestDataset(
-                    df_imgs = txt_file_val,
-                    img_dir = img_dir_val,
-                    transform = transforms.Compose([
-                        transforms.Resize(256),
-                        transforms.CenterCrop(224),
-                        transforms.ToTensor(),
-                        normalize,
-                    ]))
-    # train_loader = DataLoader(
-    #                 train_dataset,
-    #                 num_workers = args.workers,
-    #                 batch_size = args.batch_size,
-    #                 shuffle = True
-    #                 )
-    val_loader = DataLoader(
-                    val_dataset,
-                    num_workers = args.workers,
-                    batch_size = args.batch_size)
-
-    for epoch in range(args.start_epoch, args.epochs):
-
-        train_dataset = ProtestDataset(
-                        df_imgs= txt_file_train_l,
+    train_dataset = ProtestDataset(
+                        txt_file = txt_file_train,
                         img_dir = img_dir_train,
                         transform = transforms.Compose([
                                 transforms.RandomResizedCrop(224),
@@ -370,16 +332,27 @@ def main():
                                 Lighting(0.1, eigval, eigvec),
                                 normalize,
                         ]))
-
-        train_loader = DataLoader(
+    val_dataset = ProtestDataset(
+                    txt_file = txt_file_val,
+                    img_dir = img_dir_val,
+                    transform = transforms.Compose([
+                        transforms.Resize(256),
+                        transforms.CenterCrop(224),
+                        transforms.ToTensor(),
+                        normalize,
+                    ]))
+    train_loader = DataLoader(
                     train_dataset,
                     num_workers = args.workers,
                     batch_size = args.batch_size,
                     shuffle = True
                     )
+    val_loader = DataLoader(
+                    val_dataset,
+                    num_workers = args.workers,
+                    batch_size = args.batch_size)
 
-        print(len(txt_file_train_l),len(txt_file_train_nl),len(txt_file_train))
-
+    for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch)
         loss_history_train_this = train(train_loader, model, criterions,
                                         optimizer, epoch)
@@ -405,9 +378,6 @@ def main():
             'loss_history_val': loss_history_val
         }, is_best)
 
-        al_image = txt_file_train_nl.sample(1)
-        txt_file_train_l = txt_file_train_l.append(al_image)
-        txt_file_train_nl = txt_file_train_nl.drop(al_image.index)
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir",
@@ -453,11 +423,6 @@ if __name__ == "__main__":
                         type = int,
                         default = 10,
                         help = "print frequency",
-                        )
-    parser.add_argument("--num_label_samples",
-                        type = int,
-                        default = 100,
-                        help = "number of initial labeled samples",
                         )
     parser.add_argument('--resume',
                         default='', type=str, metavar='PATH',

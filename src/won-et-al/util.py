@@ -17,14 +17,14 @@ class ProtestDataset(Dataset):
     """
     dataset for training and evaluation
     """
-    def __init__(self, df_imgs, img_dir, transform = None):
+    def __init__(self, txt_file, img_dir, transform = None):
         """
         Args:
-            df_imgs: Data Frame containing image name and label
+            txt_file: Path to txt file with annotation
             img_dir: Directory with images
             transform: Optional transform to be applied on a sample.
         """
-        self.label_frame = df_imgs #pd.read_csv(txt_file, delimiter="\t").replace('-', 0)
+        self.label_frame = pd.read_csv(txt_file, delimiter="\t").replace('-', 0)
         self.img_dir = img_dir
         self.transform = transform
     def __len__(self):
@@ -34,9 +34,9 @@ class ProtestDataset(Dataset):
                                 self.label_frame.iloc[idx, 0])
         image = pil_loader(imgpath)
 
-        protest = self.label_frame.iloc[idx, 1:2].to_numpy().astype('float')
-        violence = self.label_frame.iloc[idx, 2:3].to_numpy().astype('float')
-        visattr = self.label_frame.iloc[idx, 3:].to_numpy().astype('float')
+        protest = self.label_frame.iloc[idx, 1:2].as_matrix().astype('float')
+        violence = self.label_frame.iloc[idx, 2:3].as_matrix().astype('float')
+        visattr = self.label_frame.iloc[idx, 3:].as_matrix().astype('float')
         label = {'protest':protest, 'violence':violence, 'visattr':visattr}
 
         sample = {"image":image, "label":label}

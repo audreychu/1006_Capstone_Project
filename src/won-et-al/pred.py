@@ -2,7 +2,7 @@
 created by: Donghyeon Won
 """
 
-from __future__ import print_function
+
 import os
 import argparse
 import numpy as np
@@ -68,9 +68,8 @@ def main():
     model = modified_resnet50()
     if args.cuda:
         model = model.cuda()
-    #with open(args.model) as f:
-        #print(f)
-    model.load_state_dict(torch.load(args.model)['state_dict'])
+    with open(args.model) as f:
+        model.load_state_dict(torch.load(f)['state_dict'])
     print("*** calculating the model output of the images in {img_dir}"
             .format(img_dir = args.img_dir))
 
