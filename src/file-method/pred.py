@@ -17,7 +17,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.autograd import Variable
 import torchvision.models as models
 
-from util import ProtestDatasetEval, modified_resnet50
+from util import ProtestDatasetEval, modified_resnet50, ProtestDataset_AL
 
 
 def eval_one_dir(img_dir, model):
@@ -60,6 +60,52 @@ def eval_one_dir(img_dir, model):
         df.iloc[:,1:] = np.concatenate(outputs)
         df.sort_values(by = 'imgpath', inplace=True)
         return df
+
+# def eval_one_data(img_df, img_dir, model, n):
+#         """
+#         return model output of all the images in a directory
+#         """
+#         model.eval()
+#         # make dataloader
+#         dataset = ProtestDataset_AL(img_dir = img_dir, img_df = img_df)
+#         data_loader = DataLoader(dataset,
+#                                 num_workers = args.workers,
+#                                 batch_size = args.batch_size)
+#         # load model
+
+#         outputs = []
+#         imgpaths = []
+
+#         n_imgs = len(img_df.iloc[:,0]) #len(os.listdir(img_dir))
+#         with tqdm(total=n_imgs) as pbar:
+#             for i, sample in enumerate(data_loader):
+#                 imgpath, input = sample['imgpath'], sample['image']
+#                 if args.cuda:
+#                     input = input.cuda()
+
+#                 input_var = Variable(input)
+#                 output = model(input_var)
+#                 outputs.append(output.cpu().data.numpy())
+#                 imgpaths += imgpath
+#                 if i < n_imgs / args.batch_size:
+#                     pbar.update(args.batch_size)
+#                 else:
+#                     pbar.update(n_imgs%args.batch_size)
+
+
+#         df = pd.DataFrame(np.zeros((n_imgs, 13)))
+#         df.columns = ["imgpath", "protest", "violence", "sign", "photo",
+#                       "fire", "police", "children", "group_20", "group_100",
+#                       "flag", "night", "shouting"]
+#         df['imgpath'] = imgpaths
+#         df.iloc[:,1:] = np.concatenate(outputs)
+#         df.sort_values(by = 'imgpath', inplace=True)
+#         df['protest_close'] = np.abs(df['protest'] - 0.5)
+#         df_close = df.nsmallest(n,'protest_close')
+#         img_df['imgpath'] = img_df.iloc[:,0].apply(lambda x : os.path.join(img_dir,x))
+#         return img_df[img_df['imgpath'].isin(df_close['imgpath'])]                        
+        #return df
+
 
 def main():
 

@@ -14,6 +14,7 @@ import time
 import shutil
 #from itertools import ifilter
 from PIL import Image
+from tqdm import tqdm
 from sklearn.metrics import accuracy_score, mean_squared_error
 
 import torch
@@ -24,8 +25,8 @@ from torch.autograd import Variable
 import torchvision.transforms as transforms
 import torchvision.models as models
 
-from util import ProtestDataset, modified_resnet50, AverageMeter, Lighting
-
+from util import ProtestDataset, modified_resnet50, AverageMeter, Lighting,ProtestDataset_AL
+#from pred import eval_one_data
 
 # for indexing output of the model
 protest_idx = Variable(torch.LongTensor([0]))
@@ -248,6 +249,52 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     if is_best:
         shutil.copyfile(filename, 'model_best.pth.tar')
 
+def eval_one_data(img_df, img_dir, model, n):
+        """
+        return model output of all the images in a directory
+        """
+        model.eval()
+        # make dataloader
+        dataset = ProtestDataset_AL(img_dir = img_dir, img_df = img_df)
+        data_loader = DataLoader(dataset,
+                                num_workers = args.workers,
+                                batch_size = args.batch_size)
+        # load model
+
+        outputs = []
+        imgpaths = []
+
+        n_imgs = len(img_df.iloc[:,0]) #len(os.listdir(img_dir))
+        with tqdm(total=n_imgs) as pbar:
+            for i, sample in enumerate(data_loader):
+                imgpath, input = sample['imgpath'], sample['image']
+                if args.cuda:
+                    input = input.cuda()
+
+                input_var = Variable(input)
+                output = model(input_var)
+                outputs.append(output.cpu().data.numpy())
+                imgpaths += imgpath
+                if i < n_imgs / args.batch_size:
+                    pbar.update(args.batch_size)
+                else:
+                    pbar.update(n_imgs%args.batch_size)
+
+
+        df = pd.DataFrame(np.zeros((n_imgs, 13)))
+        df.columns = ["imgpath", "protest", "violence", "sign", "photo",
+                      "fire", "police", "children", "group_20", "group_100",
+                      "flag", "night", "shouting"]
+        df['imgpath'] = imgpaths
+        df.iloc[:,1:] = np.concatenate(outputs)
+        df.sort_values(by = 'imgpath', inplace=True)
+        df['protest_close'] = np.abs(df['protest'] - 0.5)
+        df_close = df.nsmallest(n,'protest_close')
+        img_df_cp = img_df.copy()
+        img_df_cp['imgpath'] = img_df_cp.iloc[:,0].apply(lambda x : os.path.join(img_dir,x))
+        img_df_cp = img_df_cp[img_df_cp['imgpath'].isin(df_close['imgpath'])]
+        return img_df_cp.drop('imgpath',axis=1)                      
+
 
 def main():
     global best_loss
@@ -404,8 +451,8 @@ def main():
             'loss_history_train': loss_history_train,
             'loss_history_val': loss_history_val
         }, is_best)
-
-        al_image = txt_file_train_nl.sample(1)
+        al_image = eval_one_data(txt_file_train_nl,img_dir_train,model,1)
+        #al_image = txt_file_train_nl.sample(1)
         txt_file_train_l = txt_file_train_l.append(al_image)
         txt_file_train_nl = txt_file_train_nl.drop(al_image.index)
 if __name__ == "__main__":

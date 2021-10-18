@@ -73,6 +73,36 @@ class ProtestDatasetEval(Dataset):
         sample["image"] = self.transform(sample["image"])
         return sample
 
+class ProtestDataset_AL(Dataset):
+    """
+    dataset for just calculating the output (does not need an annotation file)
+    """
+    def __init__(self, img_dir, img_df):
+        """
+        Args:
+            img_dir: Directory with images
+        """
+        self.img_dir = img_dir
+        self.transform = transforms.Compose([
+                                transforms.Resize(256),
+                                transforms.CenterCrop(224),
+                                transforms.ToTensor(),
+                                transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                     std=[0.229, 0.224, 0.225]),
+                                ])
+        self.img_list =sorted(img_df.iloc[:,0]) #sorted(os.listdir(img_dir))
+    def __len__(self):
+        return len(self.img_list)
+    def __getitem__(self, idx):
+        imgpath = os.path.join(self.img_dir,
+                                self.img_list[idx])
+        image = pil_loader(imgpath)
+        # we need this variable to check if the image is protest or not)
+        sample = {"imgpath":imgpath, "image":image}
+        sample["image"] = self.transform(sample["image"])
+        return sample
+
+
 class FinalLayer(nn.Module):
     """modified last layer for resnet50 for our dataset"""
     def __init__(self):
