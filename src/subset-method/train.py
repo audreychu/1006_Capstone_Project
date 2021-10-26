@@ -26,7 +26,7 @@ from torch.autograd import Variable
 import torchvision.transforms as transforms
 import torchvision.models as models
 
-from util import ProtestDataset, modified_resnet50, AverageMeter, Lighting,ProtestDataset_AL
+from util import ProtestDataset, modified_resnet50, AverageMeter, Lighting, ProtestDataset_AL, ProtestDataset_AL_Subset
 #from pred import eval_one_data
 
 # for indexing output of the model
@@ -315,18 +315,18 @@ def calculate_similarities(model, unlabeled_dataloader, unlabeled_imgs):
 
                 input_var = Variable(input)
                 output = feature_extractor(input_var)
-                outputs.append(output.cpu().data.numpy())
+                outputs.append(output.cpu().data)
                 imgpaths += imgpath
                 if i < n_imgs / args.batch_size:
                     pbar.update(args.batch_size)
                 else:
                     pbar.update(n_imgs%args.batch_size)
 
-        features = np.concatenate(outputs)
+        features = torch.cat(outputs, dim = 0)
 
-    cos = lambda m: torch.nn.functional.normalize(m) @ torch.nn.functional.normalize(m).t()
-    similarities = torch.stack([cos(m) for m in features], dim = 0)
-    average_sim = torch.mean(similarities, dim = 1)[0]
+    cos = lambda m: torch.nn.functional.normalize(m[:,:,0,0]) @ torch.nn.functional.normalize(m[:,:,0,0]).t()
+    similarities = cos(features)
+    average_sim = torch.mean(similarities, dim = 1)
 
     return average_sim.numpy()
 
@@ -342,11 +342,13 @@ def eval_one_similarity(img_dir, unlabeled_imgs, model, n, beta):
                             num_workers = args.workers,
                             batch_size = args.batch_size)
     
+    print("Calculating cosine similarities of unlabeled images")
     similarities = calculate_similarities(model, data_loader, unlabeled_imgs)
 
     outputs = []
     imgpaths = []
 
+    print("Calculating model uncertainty of unlabeled images")
     n_imgs = len(unlabeled_imgs)
     with tqdm(total=n_imgs) as pbar:
         for i, sample in enumerate(data_loader):
@@ -363,7 +365,7 @@ def eval_one_similarity(img_dir, unlabeled_imgs, model, n, beta):
             else:
                 pbar.update(n_imgs%args.batch_size)
 
-    df = pd.DataFrame(np.zeros((n_imgs, 13)))
+    df = pd.DataFrame(np.zeros((n_imgs, 14)))
     df.columns = ["img_idx", "imgpath", "protest", "violence", "sign", "photo",
                     "fire", "police", "children", "group_20", "group_100",
                     "flag", "night", "shouting"]
@@ -378,7 +380,7 @@ def eval_one_similarity(img_dir, unlabeled_imgs, model, n, beta):
 
     """Scale all probabilities by similarity scores"""
 
-    df.iloc[:, 2:] = df.iloc[:, 2:] * (similarities ** beta)
+    df.iloc[:, 2:] = df.iloc[:, 2:].mul((similarities ** beta), axis = 0)
 
     df_close = df.nsmallest(n, 'protest_close')
 
@@ -520,9 +522,9 @@ def main():
             'loss_history_val': loss_history_val
         }, is_best)
 
-        al_images = eval_one_similarity(img_dir_train, unlabeled_imgs, model, args.num_al_samples, 1)
-        labeled_imgs = labeled_imgs.extend(al_images)
-        unlabeled_imgs = unlabeled_imgs.drop(al_images)
+        al_imgs = eval_one_similarity(img_dir_train, unlabeled_imgs, model, args.num_al_samples, 1)
+        labeled_imgs.extend(al_imgs)
+        unlabeled_imgs = [i for i in unlabeled_imgs if i not in al_imgs]
 
 
 if __name__ == "__main__":
