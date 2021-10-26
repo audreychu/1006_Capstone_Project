@@ -296,14 +296,33 @@ def eval_one_data(img_df, img_dir, model, n):
         img_df_cp = img_df_cp[img_df_cp['imgpath'].isin(df_close['imgpath'])]
         return img_df_cp.drop('imgpath',axis=1)
 
-def calculate_similarities(model, unlabeled_dataloader) -> int:
+def calculate_similarities(model, unlabeled_dataloader, unlabeled_imgs):
     """Helper function to calculate average pairwise cosine similarity between all images, for each image"""
     feature_extractor = torch.nn.Sequential(
                                     *list(model.children())[:-1]
                                 )
 
     with torch.no_grad():
-        features = feature_extractor(unlabeled_dataloader)
+        outputs = []
+        imgpaths = []
+
+        n_imgs =  len(unlabeled_imgs)
+        with tqdm(total=n_imgs) as pbar:
+            for i, sample in enumerate(unlabeled_dataloader):
+                imgpath, input = sample['imgpath'], sample['image']
+                if args.cuda:
+                    input = input.cuda()
+
+                input_var = Variable(input)
+                output = feature_extractor(input_var)
+                outputs.append(output.cpu().data.numpy())
+                imgpaths += imgpath
+                if i < n_imgs / args.batch_size:
+                    pbar.update(args.batch_size)
+                else:
+                    pbar.update(n_imgs%args.batch_size)
+
+        features = np.concatenate(outputs)
 
     cos = lambda m: torch.nn.functional.normalize(m) @ torch.nn.functional.normalize(m).t()
     similarities = torch.stack([cos(m) for m in features], dim = 0)
@@ -323,7 +342,7 @@ def eval_one_similarity(img_dir, unlabeled_imgs, model, n, beta):
                             num_workers = args.workers,
                             batch_size = args.batch_size)
     
-    similarities = calculate_similarities(model, data_loader)
+    similarities = calculate_similarities(model, data_loader, unlabeled_imgs)
 
     outputs = []
     imgpaths = []
