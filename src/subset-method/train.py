@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import time
 import shutil
+import random
 #from itertools import ifilter
 from PIL import Image
 from tqdm import tqdm
@@ -293,7 +294,76 @@ def eval_one_data(img_df, img_dir, model, n):
         img_df_cp = img_df.copy()
         img_df_cp['imgpath'] = img_df_cp.iloc[:,0].apply(lambda x : os.path.join(img_dir,x))
         img_df_cp = img_df_cp[img_df_cp['imgpath'].isin(df_close['imgpath'])]
-        return img_df_cp.drop('imgpath',axis=1)                      
+        return img_df_cp.drop('imgpath',axis=1)
+
+def calculate_similarities(model, unlabeled_dataloader) -> int:
+    """Helper function to calculate average pairwise cosine similarity between all images, for each image"""
+    feature_extractor = torch.nn.Sequential(
+                                    *list(model.children())[:-1]
+                                )
+
+    with torch.no_grad():
+        features = feature_extractor(unlabeled_dataloader)
+
+    cos = lambda m: torch.nn.functional.normalize(m) @ torch.nn.functional.normalize(m).t()
+    similarities = torch.stack([cos(m) for m in features], dim = 0)
+    average_sim = torch.mean(similarities, dim = 1)[0]
+
+    return average_sim.numpy()
+
+def eval_one_similarity(img_dir, unlabeled_imgs, model, n, beta):
+    """Evaluates unlabeled images using similarity density"""
+
+    model.eval()
+
+    al_dataset = ProtestDataset_AL_Subset(img_dir)
+    unlabeled_data = Subset(al_dataset, unlabeled_imgs)
+
+    data_loader = DataLoader(unlabeled_data, 
+                            num_workers = args.workers,
+                            batch_size = args.batch_size)
+    
+    similarities = calculate_similarities(model, data_loader)
+
+    outputs = []
+    imgpaths = []
+
+    n_imgs = len(unlabeled_imgs)
+    with tqdm(total=n_imgs) as pbar:
+        for i, sample in enumerate(data_loader):
+            imgpath, input = sample['imgpath'], sample['image']
+            if args.cuda:
+                input = input.cuda()
+
+            input_var = Variable(input)
+            output = model(input_var)
+            outputs.append(output.cpu().data.numpy())
+            imgpaths += imgpath
+            if i < n_imgs / args.batch_size:
+                pbar.update(args.batch_size)
+            else:
+                pbar.update(n_imgs%args.batch_size)
+
+    df = pd.DataFrame(np.zeros((n_imgs, 13)))
+    df.columns = ["img_idx", "imgpath", "protest", "violence", "sign", "photo",
+                    "fire", "police", "children", "group_20", "group_100",
+                    "flag", "night", "shouting"]
+    df["img_idx"] = unlabeled_imgs
+    df['imgpath'] = imgpaths
+    df.iloc[:,2:] = np.concatenate(outputs)
+
+    """Interested in probabilities closest to 0.5"""
+    df['protest_close'] = np.abs(df['protest'] - 0.5)
+    
+    assert df.shape[0] == len(similarities)
+
+    """Scale all probabilities by similarity scores"""
+
+    df.iloc[:, 2:] = df.iloc[:, 2:] * (similarities ** beta)
+
+    df_close = df.nsmallest(n, 'protest_close')
+
+    return df_close['img_idx'].to_list()
 
 
 def main():
@@ -373,9 +443,15 @@ def main():
                                 Lighting(0.1, eigval, eigvec),
                                 normalize,
                         ]))
-    txt_file_val = pd.read_csv(txt_file_val, delimiter="\t").replace('-', 0)
+
+    """Sample of labeled images to use for initial training"""
+    imgs = list(range(train_dataset.__len__()))
+    random.shuffle(imgs)
+    labeled_imgs = imgs[:args.num_label_samples]
+    unlabeled_imgs = imgs[args.num_label_samples:]
+    
     val_dataset = ProtestDataset(
-                    df_imgs = txt_file_val,
+                    txt_file = txt_file_val,
                     img_dir = img_dir_val,
                     transform = transforms.Compose([
                         transforms.Resize(256),
@@ -383,12 +459,7 @@ def main():
                         transforms.ToTensor(),
                         normalize,
                     ]))
-    # train_loader = DataLoader(
-    #                 train_dataset,
-    #                 num_workers = args.workers,
-    #                 batch_size = args.batch_size,
-    #                 shuffle = True
-    #                 )
+    
     val_loader = DataLoader(
                     val_dataset,
                     num_workers = args.workers,
@@ -396,31 +467,14 @@ def main():
 
     for epoch in range(args.start_epoch, args.epochs):
 
-        train_dataset = ProtestDataset(
-                        df_imgs= txt_file_train_l,
-                        img_dir = img_dir_train,
-                        transform = transforms.Compose([
-                                transforms.RandomResizedCrop(224),
-                                transforms.RandomRotation(30),
-                                transforms.RandomHorizontalFlip(),
-                                transforms.ColorJitter(
-                                    brightness = 0.4,
-                                    contrast = 0.4,
-                                    saturation = 0.4,
-                                    ),
-                                transforms.ToTensor(),
-                                Lighting(0.1, eigval, eigvec),
-                                normalize,
-                        ]))
+        train_subset = Subset(train_dataset, labeled_imgs)
 
         train_loader = DataLoader(
-                    train_dataset,
+                    train_subset,
                     num_workers = args.workers,
                     batch_size = args.batch_size,
                     shuffle = True
                     )
-
-        print(len(txt_file_train_l),len(txt_file_train_nl),len(txt_file_train))
 
         adjust_learning_rate(optimizer, epoch)
         loss_history_train_this = train(train_loader, model, criterions,
@@ -446,10 +500,12 @@ def main():
             'loss_history_train': loss_history_train,
             'loss_history_val': loss_history_val
         }, is_best)
-        al_image = eval_one_data(txt_file_train_nl,img_dir_train,model,1)
-        #al_image = txt_file_train_nl.sample(1)
-        txt_file_train_l = txt_file_train_l.append(al_image)
-        txt_file_train_nl = txt_file_train_nl.drop(al_image.index)
+
+        al_images = eval_one_similarity(img_dir_train, unlabeled_imgs, model, args.num_al_samples, 1)
+        labeled_imgs = labeled_imgs.extend(al_images)
+        unlabeled_imgs = unlabeled_imgs.drop(al_images)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir",
@@ -500,6 +556,11 @@ if __name__ == "__main__":
                         type = int,
                         default = 100,
                         help = "number of initial labeled samples",
+                        )
+    parser.add_argument("--num_al_samples",
+                        type = int,
+                        default = 1,
+                        help = "number of samples labeled per epoch via active learning",
                         )
     parser.add_argument('--resume',
                         default='', type=str, metavar='PATH',
