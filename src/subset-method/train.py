@@ -330,7 +330,7 @@ def calculate_similarities(model, unlabeled_dataloader, unlabeled_imgs):
 
     return average_sim.numpy()
 
-def eval_one_similarity(img_dir, unlabeled_imgs, model, n, beta):
+def eval_one_similarity(img_dir, unlabeled_imgs, model, n, beta=1):
     """Evaluates unlabeled images using similarity density"""
 
     model.eval()
@@ -380,9 +380,9 @@ def eval_one_similarity(img_dir, unlabeled_imgs, model, n, beta):
 
     """Scale all probabilities by similarity scores"""
 
-    df.iloc[:, 2:] = df.iloc[:, 2:].mul((similarities ** beta), axis = 0)
+    df.iloc[:, 2:] = (1/df.iloc[:, 2:]).mul((similarities ** beta), axis = 0)
 
-    df_close = df.nsmallest(n, 'protest_close')
+    df_close = df.nlargest(n, 'protest_close')
 
     return df_close['img_idx'].to_list()
 
