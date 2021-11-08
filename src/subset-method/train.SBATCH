@@ -19,18 +19,21 @@ OVERLAY_DIRECTORY=/scratch/wz2247/singularity/overlays/
 fi
 
 TMP_OVERLAY_SOURCE=overlay-0.5GB-200K.ext3
+#TMP_OVERLAY_SOURCE=overlay-pytorch-15GB-500k.ext3
 
 TMP_OVERLAY=${TMP_OVERLAY:-overlay-temp.ext3}
 
-DATA_DIRECTORY=${DATA_DIRECTORY:-/mnt/ram}
+DATA_DIRECTORY=${DATA_DIRECTORY:-/scratch/cr3221/1006_Capstone_Project/data/raw}
 IMAGE=${IMAGE:-/scratch/wz2247/singularity/images/pytorch_21.06-py3.sif}
 
 if [[ ! -f $TMP_OVERLAY ]]; then
 
+tmpdir="${TMPDIR:-/scratch/cr3221/1006_Capstone_Project/src}"
+
 echo "Temporary overlay not found, automatically creating a new one."
-cp "$OVERLAY_DIRECTORY/$TMP_OVERLAY_SOURCE.gz" "$TMPDIR"
-gunzip "$TMPDIR/$TMP_OVERLAY_SOURCE.gz"
-mv "$TMPDIR/$TMP_OVERLAY_SOURCE" "$TMP_OVERLAY"
+cp "$OVERLAY_DIRECTORY/$TMP_OVERLAY_SOURCE.gz" "$tmpdir"
+gunzip "$tmpdir/$TMP_OVERLAY_SOURCE.gz"
+mv "$tmpdir/$TMP_OVERLAY_SOURCE" "$TMP_OVERLAY"
 
 fi
 
@@ -42,8 +45,8 @@ singularity exec --no-home -B $HOME/.ssh -B /scratch -B $PWD --nv \
     --overlay overlay-base.ext3:ro \
     --overlay overlay-packages.ext3:ro \
     --overlay $DATA_DIRECTORY/UCLA-protest.sqf:ro \
-    $IMAGE /bin/bash -c "source /ext3/env.sh; python train.py \
-    --data_dir UCLA-protest/ --batch_size 32 --lr 0.002 --print_freq 100 --epochs 100 --cuda"
+    $IMAGE /bin/bash -c "source activate /ext3/conda/bootcamp; python train.py \
+    --data_dir /UCLA-protest/ --batch_size 32 --lr 0.002 --print_freq 100 --epochs 100 --cuda"
     
 
 
