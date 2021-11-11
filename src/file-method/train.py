@@ -293,78 +293,96 @@ def eval_one_data(img_df, img_dir, model, n):
         img_df_cp = img_df.copy()
         img_df_cp['imgpath'] = img_df_cp.iloc[:,0].apply(lambda x : os.path.join(img_dir,x))
         img_df_cp = img_df_cp[img_df_cp['imgpath'].isin(df_close['imgpath'])]
-        return img_df_cp.drop('imgpath',axis=1)    
+        return img_df_cp.drop('imgpath',axis=1)     
 
+def calculate_similarities(model, data_loader):
+    """Helper function to calculate average pairwise cosine similarity between all images, for each image"""
+    feature_extractor = torch.nn.Sequential(
+                                    *list(model.children())[:-1]
+                                )
+    with torch.no_grad():
+        outputs = []
+        imgpaths = []
 
-def adjust_learning_rate_reset(optimizer, epoch):
-    """Sets the learning rate to the initial LR decayed by 0.5 every epoch for every 5 epochs"""
+        n_imgs = len(data_loader.dataset)
+        with tqdm(total=n_imgs) as pbar:
+            for i, sample in enumerate(data_loader):
+                imgpath, input = sample['imgpath'], sample['image']
+                if args.cuda:
+                    input = input.cuda()
 
-    lr = args.lr * (0.5 ** (epoch % 5))
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-        print("Epoch, LR", epoch, param_group['lr']
+                input_var = Variable(input)
+                output = feature_extractor(input_var)
+                outputs.append(output.cpu().data)
+                imgpaths += imgpath
+                if i < n_imgs / args.batch_size:
+                    pbar.update(args.batch_size)
+                else:
+                    pbar.update(n_imgs%args.batch_size)
 
+        features = torch.cat(outputs, dim = 0)
 
-def learning_method(method_id,optimizer, heuristic_func, param1=None, param2=None,param3=None,epoch):
+    cos = lambda m: torch.nn.functional.normalize(m[:,:,0,0]) @ torch.nn.functional.normalize(m[:,:,0,0]).t()
+    similarities = cos(features)
+    average_sim = torch.mean(similarities, dim = 1)
+
+    return average_sim.numpy()
+
+def eval_one_similarity(img_df, img_dir, model, n, beta=1):
+    """Evaluates unlabeled images using similarity density"""
+
+    model.eval()
+
+    dataset = ProtestDataset_AL(img_dir = img_dir, img_df = img_df)
+    data_loader = DataLoader(dataset,
+                            num_workers = args.workers,
+                            batch_size = args.batch_size)
     
-    if method_id == 1:
-        # Dont adjust learning rate while AL. Decay it in the end.
-        if epoch<100:
-            if heuristic_func:
-                al_image = heuristic_func(param1,param2,param3)
+    print("Calculating cosine similarities of unlabeled images")
+    similarities = calculate_similarities(model, data_loader)
+
+    outputs = []
+    imgpaths = []
+
+    print("Calculating model uncertainty of unlabeled images")
+    n_imgs = len(data_loader.dataset)
+    with tqdm(total=n_imgs) as pbar:
+        for i, sample in enumerate(data_loader):
+            imgpath, input = sample['imgpath'], sample['image']
+            if args.cuda:
+                input = input.cuda()
+
+            input_var = Variable(input)
+            output = model(input_var)
+            outputs.append(output.cpu().data.numpy())
+            imgpaths += imgpath
+            if i < n_imgs / args.batch_size:
+                pbar.update(args.batch_size)
             else:
-                al_image = param1.sample(1)
-        else:
-            al_image = 0
-            adjust_learning_rate(optimizer,epoch-100)
+                pbar.update(n_imgs%args.batch_size)
 
-    elif method_id == 2:
-        #Train for 20 epochs without any AL. 20-100 do AL and train at a lower learning rate. Do another 50 by decaying without AL
-        if epoch<20:
-            adjust_learning_rate(optimizer,epoch)
-            al_image=0
+    df = pd.DataFrame(np.zeros((n_imgs, 14)))
+    df.columns = ["img_idx", "imgpath", "protest", "violence", "sign", "photo",
+                    "fire", "police", "children", "group_20", "group_100",
+                    "flag", "night", "shouting"]
+    df["img_idx"] = unlabeled_imgs
+    df['imgpath'] = imgpaths
+    df.iloc[:,2:] = np.concatenate(outputs)
 
-        elif epoch>=20 and epoch <120:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = 0.0002
-            if heuristic_func:
-                al_image = heuristic_func(param1,param2,param3)
-            else:
-                al_image = param1.sample(1)
-        else:
-            al_image=0
-            adjust_learning_rate(optimizer,epoch-120)
-
-    elif method_id == 3:
-        #Add and image every 5 epochs. Adjust learning rate and reset lr every 5 epochs
-        if epoch <= 500 and epoch % 5 == 0:
-            if heuristic_func:
-                al_image = heuristic_func(param1,param2,param3)
-            else:
-                al_image = param1.sample(1)
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = args.lr
-        else:
-            adjust_learning_rate_reset(optimizer,epoch)
-            al_image =  0
-
-
-    else:
-        #Baseline learning method. Add an image every epoch and adjust lr everytime
-        adjust_learning_rate(optimizer,epoch)
-        if heuristic_func:
-            al_image = heuristic_func(param1,param2,param3)
-        else:
-            al_image = param1.sample(1)
-
-
-
-
-    return al_image
-
+    """Interested in probabilities closest to 0.5"""
+    df['protest_close'] = np.abs(df['protest'] - 0.5)
     
+    assert df.shape[0] == len(similarities)
 
+    """Scale all probabilities by similarity scores"""
+    # df.iloc[:, 2:] = (1/df.iloc[:, 2:]).mul((similarities ** beta), axis = 0)
 
+    """Scale protest uncertainties by similarity scores"""
+    df['protest_close'] = (1 / df['protest_close']) * (similarities ** beta)
+
+    df_close = df.nlargest(n, 'protest_close')
+
+    return df_close['img_idx'].to_list()                 
 
 def main():
     global best_loss
@@ -469,21 +487,6 @@ def main():
                     num_workers = args.workers,
                     batch_size = args.batch_size)
 
-    if args.heuristic_id == 1:
-        heuristic_func = eval_one_data()
-
-    elif args.heuristic_id == 2:
-        #Faizans
-        pass
-
-    elif args.heuristic_id == 3:
-        #Connors
-        pass
-
-    else:
-        heuristic_func = None
-        
-        
     for epoch in range(args.start_epoch, args.epochs):
 
         train_dataset = ProtestDataset(
@@ -512,7 +515,7 @@ def main():
 
         print(len(txt_file_train_l),len(txt_file_train_nl),len(txt_file_train))
 
-        #adjust_learning_rate(optimizer, epoch)
+        adjust_learning_rate(optimizer, epoch)
         loss_history_train_this = train(train_loader, model, criterions,
                                         optimizer, epoch)
         loss_val, loss_history_val_this = validate(val_loader, model,
@@ -536,28 +539,15 @@ def main():
             'loss_history_train': loss_history_train,
             'loss_history_val': loss_history_val
         }, is_best)
-
-       
-
-            
-        #if heuristic_func:
-        al_image = learning_method(args.method_id,optimizer,heuristic_func,txt_file_train_nl,img_dir_train, 1, epoch)
-
-        # else:
-        #     al_image = txt_file_train_nl.sample(1)
-        #     adjust_learning_rate(optimizer, epoch)
+        al_image = eval_one_data(txt_file_train_nl,img_dir_train,model,1)
         #al_image = txt_file_train_nl.sample(1)
-        if al_image!=0:
-            txt_file_train_l = txt_file_train_l.append(al_image)
-            txt_file_train_nl = txt_file_train_nl.drop(al_image.index)
-
-
+        txt_file_train_l = txt_file_train_l.append(al_image)
+        txt_file_train_nl = txt_file_train_nl.drop(al_image.index)
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir",
                         type=str,
-                        default = "UCLA-pr
-    otest",
+                        default = "UCLA-protest",
                         help = "directory path to UCLA-protest",
                         )
     parser.add_argument("--cuda",
@@ -604,19 +594,6 @@ if __name__ == "__main__":
                         default = 100,
                         help = "number of initial labeled samples",
                         )
-
-    parser.add_argument("--method_id",
-                        type = int,
-                        default = 0,
-                        help = "Which learning rate adjustment to use",
-                        )
-
-    parser.add_argument("--heuristic_id",
-                        type = int,
-                        default = 0,
-                        help = "Which heuristic to use for AL",
-                        )
-
     parser.add_argument('--resume',
                         default='', type=str, metavar='PATH',
                         help='path to latest checkpoint (default: none)')
