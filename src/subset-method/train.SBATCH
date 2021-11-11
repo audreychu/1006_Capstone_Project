@@ -3,7 +3,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
-#SBATCH --time=2:00:00
+#SBATCH --time=6:00:00
 #SBATCH --mem=10GB
 #SBATCH --gres=gpu
 #SBATCH --job-name=AL_similarity_heuristic
