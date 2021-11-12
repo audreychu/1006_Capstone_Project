@@ -365,7 +365,7 @@ def eval_one_similarity(img_df, img_dir, model, n, beta=1):
     df.columns = ["img_idx", "imgpath", "protest", "violence", "sign", "photo",
                     "fire", "police", "children", "group_20", "group_100",
                     "flag", "night", "shouting"]
-    df["img_idx"] = unlabeled_imgs
+    
     df['imgpath'] = imgpaths
     df.iloc[:,2:] = np.concatenate(outputs)
 
@@ -382,7 +382,10 @@ def eval_one_similarity(img_df, img_dir, model, n, beta=1):
 
     df_close = df.nlargest(n, 'protest_close')
 
-    return df_close['img_idx'].to_list()
+    img_df_cp = img_df.copy()
+    img_df_cp['imgpath'] = img_df_cp.iloc[:,0].apply(lambda x : os.path.join(img_dir,x))
+    img_df_cp = img_df_cp[img_df_cp['imgpath'].isin(df_close['imgpath'])]
+    return img_df_cp.drop('imgpath',axis=1)
 
 
 def eval_one_data_gradient(img_df, img_dir, model, n):
