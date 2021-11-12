@@ -295,6 +295,94 @@ def eval_one_data(img_df, img_dir, model, n):
         img_df_cp = img_df_cp[img_df_cp['imgpath'].isin(df_close['imgpath'])]
         return img_df_cp.drop('imgpath',axis=1)    
 
+def calculate_similarities(model, data_loader):
+    """Helper function to calculate average pairwise cosine similarity between all images, for each image"""
+    feature_extractor = torch.nn.Sequential(
+                                    *list(model.children())[:-1]
+                                )
+    with torch.no_grad():
+        outputs = []
+        imgpaths = []
+
+        n_imgs = len(data_loader.dataset)
+        with tqdm(total=n_imgs) as pbar:
+            for i, sample in enumerate(data_loader):
+                imgpath, input = sample['imgpath'], sample['image']
+                if args.cuda:
+                    input = input.cuda()
+
+                input_var = Variable(input)
+                output = feature_extractor(input_var)
+                outputs.append(output.cpu().data)
+                imgpaths += imgpath
+                if i < n_imgs / args.batch_size:
+                    pbar.update(args.batch_size)
+                else:
+                    pbar.update(n_imgs%args.batch_size)
+
+        features = torch.cat(outputs, dim = 0)
+
+    cos = lambda m: torch.nn.functional.normalize(m[:,:,0,0]) @ torch.nn.functional.normalize(m[:,:,0,0]).t()
+    similarities = cos(features)
+    average_sim = torch.mean(similarities, dim = 1)
+
+    return average_sim.numpy()
+
+def eval_one_similarity(img_df, img_dir, model, n, beta=1):
+    """Evaluates unlabeled images using similarity density"""
+
+    model.eval()
+
+    dataset = ProtestDataset_AL(img_dir = img_dir, img_df = img_df)
+    data_loader = DataLoader(dataset,
+                            num_workers = args.workers,
+                            batch_size = args.batch_size)
+    
+    print("Calculating cosine similarities of unlabeled images")
+    similarities = calculate_similarities(model, data_loader)
+
+    outputs = []
+    imgpaths = []
+
+    print("Calculating model uncertainty of unlabeled images")
+    n_imgs = len(data_loader.dataset)
+    with tqdm(total=n_imgs) as pbar:
+        for i, sample in enumerate(data_loader):
+            imgpath, input = sample['imgpath'], sample['image']
+            if args.cuda:
+                input = input.cuda()
+
+            input_var = Variable(input)
+            output = model(input_var)
+            outputs.append(output.cpu().data.numpy())
+            imgpaths += imgpath
+            if i < n_imgs / args.batch_size:
+                pbar.update(args.batch_size)
+            else:
+                pbar.update(n_imgs%args.batch_size)
+
+    df = pd.DataFrame(np.zeros((n_imgs, 14)))
+    df.columns = ["img_idx", "imgpath", "protest", "violence", "sign", "photo",
+                    "fire", "police", "children", "group_20", "group_100",
+                    "flag", "night", "shouting"]
+    df["img_idx"] = unlabeled_imgs
+    df['imgpath'] = imgpaths
+    df.iloc[:,2:] = np.concatenate(outputs)
+
+    """Interested in probabilities closest to 0.5"""
+    df['protest_close'] = np.abs(df['protest'] - 0.5)
+    
+    assert df.shape[0] == len(similarities)
+
+    """Scale all probabilities by similarity scores"""
+    # df.iloc[:, 2:] = (1/df.iloc[:, 2:]).mul((similarities ** beta), axis = 0)
+
+    """Scale protest uncertainties by similarity scores"""
+    df['protest_close'] = (1 / df['protest_close']) * (similarities ** beta)
+
+    df_close = df.nlargest(n, 'protest_close')
+
+    return df_close['img_idx'].to_list()                 
 
 def adjust_learning_rate_reset(optimizer, epoch):
     """Sets the learning rate to the initial LR decayed by 0.5 every epoch for every 5 epochs"""
