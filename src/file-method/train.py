@@ -243,11 +243,11 @@ def adjust_learning_rate(optimizer, epoch):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+def save_checkpoint(state, is_best, filename='checkpoint.pth.tar',filename_best_model='model_best.pth.tar'):
     """Save checkpoints"""
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, 'model_best.pth.tar')
+        shutil.copyfile(filename, filename_best_model)
 
 def eval_one_data(img_df, img_dir, model, n):
         """
@@ -302,51 +302,51 @@ def adjust_learning_rate_reset(optimizer, epoch):
     lr = args.lr * (0.5 ** (epoch % 5))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
-        print("Epoch, LR", epoch, param_group['lr']
-
-
-def learning_method(method_id,optimizer, heuristic_func, param1=None, param2=None,param3=None,epoch):
+        
+        
+        
+def learning_method(method_id=0,optimizer=None, heuristic_func=None, param1=None, param2=None,param3=None,param4=None,epoch=0):
     
     if method_id == 1:
         # Dont adjust learning rate while AL. Decay it in the end.
         if epoch<100:
             if heuristic_func:
-                al_image = heuristic_func(param1,param2,param3)
+                al_image = heuristic_func(param1,param2,param3,param4)
             else:
                 al_image = param1.sample(1)
         else:
-            al_image = 0
+            al_image = None
             adjust_learning_rate(optimizer,epoch-100)
 
     elif method_id == 2:
         #Train for 20 epochs without any AL. 20-100 do AL and train at a lower learning rate. Do another 50 by decaying without AL
         if epoch<20:
             adjust_learning_rate(optimizer,epoch)
-            al_image=0
+            al_image = None
 
         elif epoch>=20 and epoch <120:
             for param_group in optimizer.param_groups:
                 param_group['lr'] = 0.0002
             if heuristic_func:
-                al_image = heuristic_func(param1,param2,param3)
+                al_image = heuristic_func(param1,param2,param3,param4)
             else:
                 al_image = param1.sample(1)
         else:
-            al_image=0
+            al_image = None
             adjust_learning_rate(optimizer,epoch-120)
 
     elif method_id == 3:
         #Add and image every 5 epochs. Adjust learning rate and reset lr every 5 epochs
         if epoch <= 500 and epoch % 5 == 0:
             if heuristic_func:
-                al_image = heuristic_func(param1,param2,param3)
+                al_image = heuristic_func(param1,param2,param3,param4)
             else:
                 al_image = param1.sample(1)
             for param_group in optimizer.param_groups:
                 param_group['lr'] = args.lr
         else:
             adjust_learning_rate_reset(optimizer,epoch)
-            al_image =  0
+            al_image = None
 
 
     else:
@@ -470,7 +470,7 @@ def main():
                     batch_size = args.batch_size)
 
     if args.heuristic_id == 1:
-        heuristic_func = eval_one_data()
+        heuristic_func = eval_one_data
 
     elif args.heuristic_id == 2:
         #Faizans
@@ -535,29 +535,32 @@ def main():
             'optimizer' : optimizer.state_dict(),
             'loss_history_train': loss_history_train,
             'loss_history_val': loss_history_val
-        }, is_best)
+        }, is_best,filename=f'checkpoint_{args.method_id}_{args.heuristic_id}.pth.tar',
+        filename_best_model=f'modelbest_{args.method_id}_{args.heuristic_id}.pth.tar'
+        
+        )
 
        
 
             
         #if heuristic_func:
-        al_image = learning_method(args.method_id,optimizer,heuristic_func,txt_file_train_nl,img_dir_train, 1, epoch)
+        al_image = learning_method(args.method_id,optimizer,heuristic_func,txt_file_train_nl,img_dir_train, model, 1, epoch)
 
         # else:
         #     al_image = txt_file_train_nl.sample(1)
         #     adjust_learning_rate(optimizer, epoch)
         #al_image = txt_file_train_nl.sample(1)
-        if al_image!=0:
+        if al_image is not None:
             txt_file_train_l = txt_file_train_l.append(al_image)
             txt_file_train_nl = txt_file_train_nl.drop(al_image.index)
-
+        for param_group in optimizer.param_groups:
+            print(f"At epoch {epoch} the lr is : {param_group['lr']}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir",
                         type=str,
-                        default = "UCLA-pr
-    otest",
+                        default = "UCLA-protest",
                         help = "directory path to UCLA-protest",
                         )
     parser.add_argument("--cuda",
