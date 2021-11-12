@@ -382,7 +382,165 @@ def eval_one_similarity(img_df, img_dir, model, n, beta=1):
 
     df_close = df.nlargest(n, 'protest_close')
 
-    return df_close['img_idx'].to_list()                 
+    return df_close['img_idx'].to_list()
+
+
+def eval_one_data_gradient(img_df, img_dir, model, n):
+    """
+    return model output of all the images in a directory
+    """
+    model.eval()
+    # make dataloader
+    dataset = ProtestDataset_AL(img_dir = img_dir, img_df = img_df)
+    data_loader = DataLoader(dataset,
+                            num_workers = args.workers,
+                            batch_size = args.batch_size)
+    # load model
+
+    outputs = []
+    imgpaths = []
+
+    n_imgs = len(img_df.iloc[:,0]) #len(os.listdir(img_dir))
+    with tqdm(total=n_imgs) as pbar:
+        for i, sample in enumerate(data_loader):
+            imgpath, input = sample['imgpath'], sample['image']
+            if args.cuda:
+                input = input.cuda()
+
+            input_var = Variable(input)
+            output = model(input_var)
+            outputs.append(output.cpu().data.numpy())
+            imgpaths += imgpath
+            if i < n_imgs / args.batch_size:
+                pbar.update(args.batch_size)
+            else:
+                pbar.update(n_imgs%args.batch_size)
+
+
+    df = pd.DataFrame(np.zeros((n_imgs, 13)))
+    df.columns = ["imgpath", "protest", "violence", "sign", "photo",
+                    "fire", "police", "children", "group_20", "group_100",
+                    "flag", "night", "shouting"]
+    df['imgpath'] = imgpaths
+    df.iloc[:,1:] = np.concatenate(outputs)
+    df.sort_values(by = 'imgpath', inplace=True)
+    df['protest_close'] = np.abs(df['protest'] - 0.5)
+    df_close = df.nsmallest(100,'protest_close')
+    img_df_cp = img_df.copy()
+    img_df_cp['imgpath'] = img_df_cp.iloc[:,0].apply(lambda x : os.path.join(img_dir,x))
+    img_df_cp = img_df_cp[img_df_cp['imgpath'].isin(df_close['imgpath'])]
+
+    gradient_df = train_gradient(img_df_cp.drop('imgpath',axis=1), img_dir, model)
+    gradient_largest = gradient_df.nlargest(n, 'expected_gradient')
+
+    img_df_cp = img_df_cp[img_df_cp['fname'].isin(gradient_largest['fname'])]
+
+    return img_df_cp.drop('imgpath',axis=1)
+
+def train_gradient(img_df, img_dir, model):
+    
+    criterion_protest = nn.BCELoss()
+    criterion_violence = nn.MSELoss()
+    criterion_visattr = nn.BCELoss()
+    criterions = [criterion_protest, criterion_violence, criterion_visattr]
+    
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+    eigval = torch.Tensor([0.2175, 0.0188, 0.0045])
+    eigvec = torch.Tensor([[-0.5675,  0.7192,  0.4009],
+                            [-0.5808, -0.0045, -0.8140],
+                            [-0.5836, -0.6948,  0.4203]])
+    
+    train_dataset_nl = ProtestDataset(
+                        df_imgs= img_df,
+                        img_dir = img_dir,
+                        transform = transforms.Compose([
+                                transforms.RandomResizedCrop(224),
+                                transforms.RandomRotation(30),
+                                transforms.RandomHorizontalFlip(),
+                                transforms.ColorJitter(
+                                    brightness = 0.4,
+                                    contrast = 0.4,
+                                    saturation = 0.4,
+                                    ),
+                                transforms.ToTensor(),
+                                Lighting(0.1, eigval, eigvec),
+                                normalize,
+                        ]))
+    train_loader_nl = DataLoader(
+                train_dataset_nl,
+                num_workers = args.workers,
+                batch_size = 1,
+                shuffle = False
+                )
+
+    n_imgs = len(img_df.iloc[:,0])
+
+    label_0s = []
+    label_1s = []
+    imgs = []
+    prob_1s = []
+    for i, sample in tqdm(enumerate(train_loader_nl)):
+        # measure data loading batch_time
+        input, target, img_name = sample['image'], sample['label'], sample['fname']
+        #print(target)
+        imgs += img_name
+        if args.cuda:
+            input = input.cuda()
+            for k, v in target.items():
+                target[k] = v.cuda()
+        target_var = {}
+        for k,v in target.items():
+            target_var[k] = Variable(v)
+
+        input_var = Variable(input)
+        output = model(input_var)
+        prob_1s.append(output.cpu().data.numpy()[0,0])
+        #print(input_var)
+        target_var['protest'] = torch.zeros(target_var['protest'].size(), dtype= torch.float64).cuda()
+
+        losses, scores, N_protest = calculate_loss(output, target_var, criterions)
+
+        loss = 0
+        for l in losses:
+            loss += l
+        # back prop
+        loss.backward()
+        total_norm_0 = 0
+        for p in model.parameters():
+            param_norm = p.grad.detach().data.norm(2)
+            p.grad.data.zero_()
+            total_norm_0 += param_norm.item() ** 2
+        total_norm_0 = total_norm_0 ** 0.5
+        label_0s.append(total_norm_0)
+
+
+        target_var['protest'] = torch.ones(target_var['protest'].size(), dtype= torch.float64).cuda()
+
+        output = model(input_var)
+        losses, scores, N_protest = calculate_loss(output, target_var, criterions)
+        
+        loss = 0
+        for l in losses:
+            loss += l
+        # back prop
+        loss.backward()
+        total_norm_1 = 0
+        for p in model.parameters():
+            param_norm = p.grad.detach().data.norm(2)
+            p.grad.data.zero_()
+            total_norm_1 += param_norm.item() ** 2
+        total_norm_1 = total_norm_1 ** 0.5
+        label_1s.append(total_norm_1)
+
+    df = pd.DataFrame(np.zeros((n_imgs, 4)))
+    df.columns = ['fname', 'label_0', 'label_1', 'prob_1']
+    df['fname'] = imgs
+    df['label_0'] = label_0s
+    df['label_1'] = label_1s
+    df['prob_1'] = prob_1s
+    df['expected_gradient'] = (df['label_1'] * df['prob_1']) + (df['label_0'] * (1-df['prob_1']))
+    return df       
 
 def adjust_learning_rate_reset(optimizer, epoch):
     """Sets the learning rate to the initial LR decayed by 0.5 every epoch for every 5 epochs"""
@@ -441,7 +599,7 @@ def learning_method(method_id=0,optimizer=None, heuristic_func=None, param1=None
         #Baseline learning method. Add an image every epoch and adjust lr everytime
         adjust_learning_rate(optimizer,epoch)
         if heuristic_func:
-            al_image = heuristic_func(param1,param2,param3)
+            al_image = heuristic_func(param1,param2,param3, param4)
         else:
             al_image = param1.sample(1)
 
@@ -561,11 +719,11 @@ def main():
         heuristic_func = eval_one_data
 
     elif args.heuristic_id == 2:
-        #Faizans
+        heuristic_func = eval_one_data_gradient
         pass
 
     elif args.heuristic_id == 3:
-        #Connors
+        heuristic_func = eval_one_similarity
         pass
 
     else:

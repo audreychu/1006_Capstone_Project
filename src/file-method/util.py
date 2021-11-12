@@ -39,7 +39,7 @@ class ProtestDataset(Dataset):
         visattr = self.label_frame.iloc[idx, 3:].to_numpy().astype('float')
         label = {'protest':protest, 'violence':violence, 'visattr':visattr}
 
-        sample = {"image":image, "label":label}
+        sample = {"image":image, "label":label, "fname": self.label_frame.iloc[idx, 0]}
         if self.transform:
             sample["image"] = self.transform(sample["image"])
         return sample
