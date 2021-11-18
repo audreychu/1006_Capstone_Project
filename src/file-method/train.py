@@ -378,7 +378,7 @@ def eval_one_similarity(img_df, img_dir, model, n, beta=1):
     # df.iloc[:, 2:] = (1/df.iloc[:, 2:]).mul((similarities ** beta), axis = 0)
 
     """Scale protest uncertainties by similarity scores"""
-    df['protest_close'] = (1 / df['protest_close']) * (similarities ** beta)
+    df['protest_close'] = (1 - df['protest_close']) * (similarities ** beta)
 
     df_close = df.nlargest(n, 'protest_close')
 
