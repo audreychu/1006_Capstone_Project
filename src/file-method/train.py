@@ -428,7 +428,7 @@ def eval_one_data_gradient(img_df, img_dir, model, n):
     df.iloc[:,1:] = np.concatenate(outputs)
     df.sort_values(by = 'imgpath', inplace=True)
     df['protest_close'] = np.abs(df['protest'] - 0.5)
-    df_close = df.nsmallest(100,'protest_close')
+    df_close = df.nsmallest(50,'protest_close')
     img_df_cp = img_df.copy()
     img_df_cp['imgpath'] = img_df_cp.iloc[:,0].apply(lambda x : os.path.join(img_dir,x))
     img_df_cp = img_df_cp[img_df_cp['imgpath'].isin(df_close['imgpath'])]
@@ -511,9 +511,10 @@ def train_gradient(img_df, img_dir, model):
         loss.backward()
         total_norm_0 = 0
         for p in model.parameters():
-            param_norm = p.grad.detach().data.norm(2)
-            p.grad.data.zero_()
-            total_norm_0 += param_norm.item() ** 2
+            if p.requires_grad:
+                param_norm = p.grad.detach().data.norm(2)
+                p.grad.data.zero_()
+                total_norm_0 += param_norm.item() ** 2
         total_norm_0 = total_norm_0 ** 0.5
         label_0s.append(total_norm_0)
 
@@ -530,9 +531,10 @@ def train_gradient(img_df, img_dir, model):
         loss.backward()
         total_norm_1 = 0
         for p in model.parameters():
-            param_norm = p.grad.detach().data.norm(2)
-            p.grad.data.zero_()
-            total_norm_1 += param_norm.item() ** 2
+            if p.requires_grad:
+                param_norm = p.grad.detach().data.norm(2)
+                p.grad.data.zero_()
+                total_norm_1 += param_norm.item() ** 2
         total_norm_1 = total_norm_1 ** 0.5
         label_1s.append(total_norm_1)
 
@@ -562,7 +564,7 @@ def learning_method(method_id=0,optimizer=None, heuristic_func=None, param1=None
             if heuristic_func:
                 al_image = heuristic_func(param1,param2,param3,param4)
             else:
-                al_image = param1.sample(1)
+                al_image = param1.sample(param4)
         else:
             al_image = None
             adjust_learning_rate(optimizer,epoch-100)
@@ -579,7 +581,7 @@ def learning_method(method_id=0,optimizer=None, heuristic_func=None, param1=None
             if heuristic_func:
                 al_image = heuristic_func(param1,param2,param3,param4)
             else:
-                al_image = param1.sample(1)
+                al_image = param1.sample(param4)
         else:
             al_image = None
             adjust_learning_rate(optimizer,epoch-120)
@@ -590,12 +592,30 @@ def learning_method(method_id=0,optimizer=None, heuristic_func=None, param1=None
             if heuristic_func:
                 al_image = heuristic_func(param1,param2,param3,param4)
             else:
-                al_image = param1.sample(1)
+                al_image = param1.sample(param4)
             for param_group in optimizer.param_groups:
                 param_group['lr'] = args.lr
         else:
             adjust_learning_rate_reset(optimizer,epoch)
             al_image = None
+            
+    elif method_id == 4:
+        #Train for 20 epochs without any AL. 20-100 do AL and train at a lower learning rate. Do another 50 by decaying without AL
+        if epoch<20:
+            adjust_learning_rate(optimizer,epoch)
+            al_image = None
+
+        elif epoch>=20 and epoch <120:
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = 0.0002
+                args.lr = 0.0002
+            if heuristic_func:
+                al_image = heuristic_func(param1,param2,param3,param4)
+            else:
+                al_image = param1.sample(param4)
+        else:
+            al_image = None
+            adjust_learning_rate(optimizer,epoch-120)
 
 
     else:
@@ -604,7 +624,7 @@ def learning_method(method_id=0,optimizer=None, heuristic_func=None, param1=None
         if heuristic_func:
             al_image = heuristic_func(param1,param2,param3, param4)
         else:
-            al_image = param1.sample(1)
+            al_image = param1.sample(param4)
 
 
 
@@ -621,6 +641,7 @@ def main():
     loss_history_val = []
     data_dir = args.data_dir
     num_label_samples = args.num_label_samples
+    n = args.num_samples_added
     img_dir_train = os.path.join(data_dir, "img/train")
     img_dir_val = os.path.join(data_dir, "img/test")
     txt_file_train = os.path.join(data_dir, "annot_train.txt")
@@ -793,7 +814,7 @@ def main():
 
             
         #if heuristic_func:
-        al_image = learning_method(args.method_id,optimizer,heuristic_func,txt_file_train_nl,img_dir_train, model, 1, epoch)
+        al_image = learning_method(args.method_id,optimizer,heuristic_func,txt_file_train_nl,img_dir_train, model, n, epoch)
 
         # else:
         #     al_image = txt_file_train_nl.sample(1)
@@ -855,6 +876,12 @@ if __name__ == "__main__":
                         type = int,
                         default = 100,
                         help = "number of initial labeled samples",
+                        )
+    
+    parser.add_argument("--num_samples_added",
+                        type = int,
+                        default = 1,
+                        help = "number of samples added each epoch",
                         )
 
     parser.add_argument("--method_id",
