@@ -17,12 +17,12 @@ from PIL import Image
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, mean_squared_error
 
-import sys
-import os
+# import sys
+# import os
 
-if os.environ.get('DISPLAY','') == '':
-    print('no display found. Using :0.0')
-    os.environ.__setitem__('DISPLAY', ':0.0')
+# if os.environ.get('DISPLAY','') == '':
+#     print('no display found. Using :0.0')
+#     os.environ.__setitem__('DISPLAY', ':0.0')
 
 import torch
 import torch.nn as nn
