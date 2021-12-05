@@ -784,8 +784,8 @@ def main():
             'optimizer' : optimizer.state_dict(),
             'loss_history_train': loss_history_train,
             'loss_history_val': loss_history_val
-        }, is_best,filename=f'checkpoint_{args.method_id}_{args.heuristic_id}.pth.tar',
-        filename_best_model=f'modelbest_{args.method_id}_{args.heuristic_id}.pth.tar'
+        }, is_best,filename=f'checkpoint_{args.method_id}_{args.heuristic_id}_{args.beta}.pth.tar',
+        filename_best_model=f'modelbest_{args.method_id}_{args.heuristic_id}_{args.beta}.pth.tar'
         
         )
 
@@ -878,6 +878,12 @@ if __name__ == "__main__":
                         change learning rate when resuming")
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
+
+    parser.add_argument("--beta",
+                        type = float,
+                        default = 1,
+                        help = "Exponential scaling factor for similarity heuristic",
+                        )
     args = parser.parse_args()
 
     if args.cuda:
