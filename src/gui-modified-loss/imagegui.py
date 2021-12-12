@@ -8,7 +8,7 @@ class Showimage():
         image_to_show = Image.open(imagepath)
         self.window = Tk()
         
-        canvas = Canvas(self.window, width = 900, height = 700)  
+        canvas = Canvas(self.window, width = 700, height = 500)  
         img = ImageTk.PhotoImage(image_to_show)
         
         canvas.create_image(0,0, anchor=NW, image=img)
